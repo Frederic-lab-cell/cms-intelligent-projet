@@ -1,149 +1,111 @@
-﻿import nltk
-from nltk.corpus import stopwords
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from models.database import db, Product, Tag
-from config import Config
+﻿"""ml/tfidf_engine.py — TF-IDF sans sklearn ni nltk"""
+import math
+from collections import Counter
 
-# --- CONFIGURATION NLTK ---
-# On s'assure que les stopwords sont téléchargés une seule fois
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
+FRENCH_STOP_WORDS = {
+    "le","la","les","de","du","des","un","une","et","en","au","aux",
+    "est","sont","avec","pour","par","sur","dans","qui","que","qu",
+    "se","sa","son","ses","ce","cet","cette","ces","je","tu","il",
+    "elle","nous","vous","ils","elles","mon","ton","leur","leurs",
+    "pas","plus","aussi","comme","mais","ou","donc","car","ni","si"
+}
+
+def tokenize(text):
+    text = text.lower()
+    tokens = []
+    word = ""
+    for c in text:
+        if c.isalnum():
+            word += c
+        else:
+            if word and word not in FRENCH_STOP_WORDS and len(word) > 2:
+                tokens.append(word)
+            word = ""
+    if word and word not in FRENCH_STOP_WORDS and len(word) > 2:
+        tokens.append(word)
+    return tokens
 
 class TFIDFEngine:
     def __init__(self):
-        # Récupération de la liste des mots vides français
-        self.french_stop_words = stopwords.words('french')
-        
-        # CORRECTION : On passe la LISTE french_stop_words au lieu de la chaîne 'french'
-        self.vectorizer = TfidfVectorizer(
-            stop_words=self.french_stop_words, 
-            token_pattern=r'(?u)\b\w\w+\b',
-            max_features=Config.TFIDF_MAX_FEATURES,
-            strip_accents='unicode',
-            ngram_range=(1, 2),
-        )
-        self.is_fitted = False
-        self.tfidf_matrix = None
+        self.products = []
+        self.tfidf_matrix = []
         self.feature_names = []
-        self.product_ids = []
+        self.vectorizer = self  # compatibilité avec app.py
 
     def fit_from_db(self):
-        """Réentraîne le modèle sur tous les produits existants."""
-        products = Product.query.all()
-        if not products:
-            self.is_fitted = False
-            return False
-
-        texts = [f"{p.name} {p.description or ''}" for p in products]
-
         try:
-            self.vectorizer.fit(texts)
-            self.tfidf_matrix = self.vectorizer.transform(texts)
-            self.feature_names = self.vectorizer.get_feature_names_out()
-            self.product_ids = [p.id for p in products]
-            self.is_fitted = True
+            from models.database import Product
+            products = Product.query.filter_by(is_active=True).all()
+            self._fit([p for p in products])
         except Exception as e:
-            print(f"Erreur TF-IDF fit_from_db : {e}")
-            self.is_fitted = False
-            return False
+            print(f"Erreur fit_from_db: {e}")
 
-        # Mise à jour des Tags en base de données
+    def _fit(self, products):
+        self.products = products
+        corpus = []
+        for p in products:
+            text = f"{p.name} {p.description or ''}"
+            corpus.append(tokenize(text))
+
+        # Vocabulaire
+        vocab = {}
+        for tokens in corpus:
+            for t in set(tokens):
+                vocab[t] = vocab.get(t, 0) + 1
+
+        self.feature_names = [w for w, c in vocab.items() if c >= 1]
+        vocab_index = {w: i for i, w in enumerate(self.feature_names)}
+        N = len(corpus)
+
+        # TF-IDF
+        self.tfidf_matrix = []
+        for tokens in corpus:
+            tf = Counter(tokens)
+            total = max(len(tokens), 1)
+            vec = [0.0] * len(self.feature_names)
+            for word, idx in vocab_index.items():
+                if tf[word] > 0:
+                    tf_val = tf[word] / total
+                    idf_val = math.log(N / (vocab.get(word, 0) + 1)) + 1
+                    vec[idx] = tf_val * idf_val
+            self.tfidf_matrix.append(vec)
+
+    def similar_products(self, product_id, top_n=6):
         try:
-            Tag.query.delete()
-            for i, product in enumerate(products):
-                row = self.tfidf_matrix.getrow(i).toarray()[0]
-                top_indices = row.argsort()[-Config.TFIDF_MAX_TAGS:][::-1]
+            ids = [p.id for p in self.products]
+            if product_id not in ids:
+                return []
+            idx = ids.index(product_id)
+            vec = self.tfidf_matrix[idx]
 
-                for idx in top_indices:
-                    if row[idx] > 0:
-                        new_tag = Tag(
-                            product_id=product.id,
-                            term=self.feature_names[idx],
-                            tfidf_score=float(row[idx])
-                        )
-                        db.session.add(new_tag)
-            db.session.commit()
-            return True
-        except Exception as e:
-            db.session.rollback()
-            print(f"Erreur TF-IDF tag update : {e}")
-            return False
-
-    def fit_single(self, product_id: int):
-        """Réentraîne l'index après ajout / modification de produit."""
-        return self.fit_from_db()
-
-    def search(self, text, top_k=24):
-        """Recherche sémantique TF-IDF sur tout le catalogue."""
-        if not self.is_fitted and not self.fit_from_db():
-            return []
-
-        try:
-            query_vec = self.vectorizer.transform([text])
-            similarities = cosine_similarity(self.tfidf_matrix, query_vec).flatten()
-            top_indices = similarities.argsort()[::-1][:top_k]
-
-            results = []
-            for idx in top_indices:
-                if similarities[idx] <= 0:
+            scores = []
+            for i, other_vec in enumerate(self.tfidf_matrix):
+                if i == idx:
                     continue
-                product = Product.query.get(self.product_ids[idx])
-                if product:
-                    data = product.to_dict()
-                    data["score"] = float(similarities[idx])
-                    results.append(data)
-            return results
+                dot = sum(a*b for a, b in zip(vec, other_vec))
+                norm1 = math.sqrt(sum(a**2 for a in vec))
+                norm2 = math.sqrt(sum(b**2 for b in other_vec))
+                sim = dot / (norm1 * norm2) if norm1 * norm2 > 0 else 0
+                scores.append((sim, i))
+
+            scores.sort(reverse=True)
+            return [self.products[i].to_dict() for _, i in scores[:top_n]]
         except Exception as e:
-            print(f"Erreur TF-IDF search : {e}")
+            print(f"Erreur similar_products: {e}")
             return []
 
-    def similar_products(self, product_id: int, top_n: int = None):
-        """Retourne les produits les plus proches par similarité cosinus."""
-        if not self.is_fitted and not self.fit_from_db():
-            return []
-
-        if product_id not in self.product_ids:
-            return []
-
+    def extract_tags(self, text, top_n=5):
         try:
-            idx = self.product_ids.index(product_id)
-            query_vec = self.tfidf_matrix.getrow(idx)
-            similarities = cosine_similarity(self.tfidf_matrix, query_vec).flatten()
-            similarities[idx] = -1 # S'exclure lui-même
-
-            top_n = top_n or Config.SIMILARITY_TOP_N
-            top_indices = similarities.argsort()[::-1][:top_n]
-
-            results = []
-            for i in top_indices:
-                if similarities[i] <= 0:
-                    continue
-                product = Product.query.get(self.product_ids[i])
-                if product:
-                    data = product.to_dict()
-                    data["score"] = float(similarities[i])
-                    results.append(data)
-            return results
-        except Exception as e:
-            print(f"Erreur TF-IDF similar_products : {e}")
-            return []
-
-    def extract_tags(self, text, top_n=None):
-        """Extrait des tags pour un nouveau produit."""
-        if top_n is None:
-            top_n = Config.TFIDF_MAX_TAGS
-
-        if not self.is_fitted and not self.fit_from_db():
-            return []
-
-        try:
-            row = self.vectorizer.transform([text]).toarray()[0]
-            top_indices = row.argsort()[-top_n:][::-1]
-            tags = [self.feature_names[i] for i in top_indices if row[i] > 0]
-            return tags
+            tokens = tokenize(text)
+            freq = Counter(tokens)
+            return [w for w, _ in freq.most_common(top_n)]
         except Exception as e:
             print(f"Erreur extraction tags: {e}")
             return []
+
+    def transform(self, texts):
+        """Compatibilité sklearn"""
+        return self
+
+    def toarray(self):
+        return [self.tfidf_matrix[-1]] if self.tfidf_matrix else [[]]
