@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "recharts": "^3.8.1",
+    "sweetalert2": "^11.26.24"
+  }
+}
