@@ -102,10 +102,14 @@ def create_app():
         os.makedirs(app.config['UPLOAD_FOLDER'])
 
     # --- CONFIGURATION CORS ---
-    CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "http://localhost:5173"]}}, 
-         supports_credentials=True,
-         allow_headers=["Content-Type", "Authorization"],
-         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    CORS(app, resources={r"/api/*": {"origins": [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://cms-intelligent-frontend.onrender.com"
+]}},
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     
     JWTManager(app)
     db.init_app(app)
