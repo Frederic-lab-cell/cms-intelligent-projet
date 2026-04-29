@@ -30,9 +30,9 @@ except ImportError:
         SQLALCHEMY_DATABASE_URI = "mysql+pymysql://root:@localhost/cms_intelligent"
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         JWT_SECRET_KEY = "frederic-master-2-cybersecurity-key-2026-super-long"
-        UPLOAD_FOLDER = os.path.abspath(os.path.join(os.getcwd(), 'static', 'uploads'))
+        # Correction du chemin pour qu'il soit toujours valide
+        UPLOAD_FOLDER = os.path.join(os.getcwd(), 'static', 'uploads')
         MAX_CONTENT_LENGTH = 10 * 1024 * 1024
-        # FIX #1 — Valeurs par défaut pour les attributs ML manquants dans la Config fallback
         TFIDF_MAX_TAGS = 5
         RL_LEARNING_RATE = 0.01
         RL_DISCOUNT = 0.9
@@ -73,19 +73,15 @@ CATEGORY_KEYWORDS = {
     ],
 }
 
-
 def _normalize_text(text: str) -> str:
     return re.sub(r"[^\w\s]", " ", (text or "").lower()).strip()
 
-
 def _get_default_category_id():
-    # FIX #2 — Category.query.get() est déprécié en SQLAlchemy 2.x, utiliser db.session.get()
     category = db.session.get(Category, 1)
     if category:
         return category.id
     first = Category.query.first()
     return first.id if first else 1
-
 
 def infer_category_id(name: str, description: str) -> int:
     text = _normalize_text(f"{name} {description}")
@@ -110,9 +106,7 @@ def infer_category_id(name: str, description: str) -> int:
 
     return _get_default_category_id()
 
-
 def upload_to_cloudinary(file, folder="cms_intelligent"):
-    """Upload un fichier sur Cloudinary et retourne l'URL sécurisée."""
     try:
         result = cloudinary.uploader.upload(
             file,
@@ -124,33 +118,35 @@ def upload_to_cloudinary(file, folder="cms_intelligent"):
         print(f"Erreur Cloudinary upload: {e}")
         return None
 
-
-# FIX #3 — Fonction utilitaire de conversion sécurisée pour price/stock
 def _safe_float(value, default=0.0):
-    """Convertit en float sans planter sur chaîne vide ou None."""
     try:
-        return float(value) if value not in (None, "", "null") else default
+        if value is None or str(value).strip() in ("", "null", "undefined"):
+            return default
+        return float(value)
     except (TypeError, ValueError):
         return default
-
 
 def _safe_int(value, default=0):
-    """Convertit en int sans planter sur chaîne vide ou None."""
     try:
-        return int(value) if value not in (None, "", "null") else default
+        if value is None or str(value).strip() in ("", "null", "undefined"):
+            return default
+        return int(value)
     except (TypeError, ValueError):
         return default
-
 
 def create_app():
     app = Flask(__name__)
     app.url_map.strict_slashes = False
     app.config.from_object(Config)
 
+    # CORRECTION : Création robuste du dossier uploads
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
-        os.makedirs(app.config['UPLOAD_FOLDER'])
+        try:
+            os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            print(f"✅ Dossier créé : {app.config['UPLOAD_FOLDER']}")
+        except Exception as e:
+            print(f"⚠️ Erreur création dossier uploads: {e}")
 
-    # --- CONFIGURATION CORS ---
     CORS(app, resources={r"/api/*": {"origins": [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -163,7 +159,6 @@ def create_app():
     JWTManager(app)
     db.init_app(app)
 
-    # --- SERVIR LES IMAGES LOCALES (fallback) ---
     @app.route('/static/uploads/<filename>')
     def uploaded_file(filename):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -175,7 +170,6 @@ def create_app():
             return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
         return jsonify({"error": f"File {filename} not found"}), 404
 
-    # --- ROUTE LATEST ---
     @app.route('/api/products/latest', methods=['GET', 'OPTIONS'])
     def get_latest_products():
         if request.method == 'OPTIONS':
@@ -186,7 +180,6 @@ def create_app():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    # --- ROUTES CATÉGORIES ---
     @app.route('/api/products/categories/all', methods=['GET', 'OPTIONS'])
     @app.route('/api/products/categories', methods=['GET', 'POST', 'OPTIONS'])
     def handle_categories_root():
@@ -211,7 +204,6 @@ def create_app():
                 return jsonify({'id': existing.id}), 200
         return jsonify([{'id': c.id, 'name': c.name} for c in Category.query.all()]), 200
 
-    # --- ROUTES PRODUITS ---
     @app.route('/api/products', methods=['GET', 'POST', 'OPTIONS'])
     def handle_products():
         if request.method == 'OPTIONS':
@@ -219,7 +211,6 @@ def create_app():
 
         if request.method == 'POST':
             try:
-                # 1. GESTION DYNAMIQUE DE LA CATÉGORIE
                 new_cat_name = request.form.get('new_category_name', '').strip()
                 if new_cat_name:
                     cat = Category.query.filter_by(name=new_cat_name).first()
@@ -234,7 +225,6 @@ def create_app():
                     if category_id_raw:
                         try:
                             candidate_id = int(category_id_raw)
-                            # FIX #4 — Remplacer Category.query.get() déprécié
                             if db.session.get(Category, candidate_id):
                                 category_id = candidate_id
                         except (TypeError, ValueError):
@@ -246,7 +236,6 @@ def create_app():
                             request.form.get('description', '')
                         )
 
-                # 2. GESTION IMAGE PRINCIPALE — CLOUDINARY
                 file = request.files.get('image')
                 image_url = "default.png"
                 if file and file.filename != '':
@@ -254,13 +243,11 @@ def create_app():
                     if cloudinary_url:
                         image_url = cloudinary_url
                     else:
-                        # Fallback local si Cloudinary échoue
                         ext = os.path.splitext(secure_filename(file.filename))[1]
                         unique_filename = f"main_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
                         file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
                         image_url = unique_filename
 
-                # 3. GESTION DES ANGLES (MULTI-IMAGES) — CLOUDINARY
                 add_files = request.files.getlist('additional_images')
                 images_list = [image_url]
                 for a_file in add_files:
@@ -269,14 +256,11 @@ def create_app():
                         if cloudinary_url:
                             images_list.append(cloudinary_url)
                         else:
-                            # Fallback local
                             ext = os.path.splitext(secure_filename(a_file.filename))[1]
                             a_name = f"angle_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
                             a_file.save(os.path.join(app.config['UPLOAD_FOLDER'], a_name))
                             images_list.append(a_name)
 
-                # 4. CRÉATION DU PRODUIT
-                # FIX #5 — Utiliser _safe_float / _safe_int pour éviter ValueError sur chaîne vide
                 new_p = Product(
                     name=request.form.get('name', '').strip() or None,
                     price=_safe_float(request.form.get('price')),
@@ -286,14 +270,12 @@ def create_app():
                     image_url=image_url
                 )
 
-                # FIX #6 — Vérification que le nom n'est pas vide (contrainte NOT NULL fréquente)
                 if not new_p.name:
                     return jsonify({"error": "Le nom du produit est requis"}), 400
 
                 if hasattr(new_p, 'images_list'):
                     new_p.images_list = images_list
 
-                # FIX #7 — Vérifier que views/ia_score existent comme attributs avant d'assigner
                 if hasattr(new_p, 'views'):
                     new_p.views = 0
                 if hasattr(new_p, 'ia_score'):
@@ -302,7 +284,6 @@ def create_app():
                 db.session.add(new_p)
                 db.session.flush()
 
-                # 5. GÉNÉRATION DES TAGS IA
                 if hasattr(app, 'tfidf_engine'):
                     try:
                         text_content = f"{new_p.name} {new_p.description}"
@@ -311,8 +292,6 @@ def create_app():
 
                         row = app.tfidf_engine.vectorizer.transform([text_content]).toarray()[0]
                         feature_names = app.tfidf_engine.vectorizer.get_feature_names_out()
-
-                        # FIX #8 — getattr avec défaut pour TFIDF_MAX_TAGS
                         max_tags = getattr(Config, 'TFIDF_MAX_TAGS', 5)
                         top_indices = row.argsort()[-max_tags:][::-1]
 
@@ -324,22 +303,18 @@ def create_app():
                                     tfidf_score=float(row[idx])
                                 ))
                     except Exception as e:
-                        # FIX #9 — Ne pas laisser l'erreur IA bloquer la création du produit
                         print(f"Erreur IA Tags (non bloquant): {e}")
 
                 db.session.commit()
                 db.session.refresh(new_p)
-
                 return jsonify(new_p.to_dict()), 201
 
             except Exception as e:
                 db.session.rollback()
-                # FIX #10 — Toujours logger le traceback complet côté serveur pour debug
                 print(f"[ERREUR POST /api/products] {e}")
                 print(traceback.format_exc())
                 return jsonify({"error": str(e)}), 500
 
-        # GET — liste paginée
         page = request.args.get('page', 1, type=int)
         pagination = Product.query.options(joinedload(Product.category)).order_by(
             Product.id.desc()).paginate(page=page, per_page=100, error_out=False)
@@ -348,7 +323,6 @@ def create_app():
             "total": pagination.total
         }), 200
 
-    # --- ROUTE SUGGESTION IA ---
     @app.route('/api/products/suggestions/<int:product_id>', methods=['GET'])
     def get_ai_suggestions(product_id):
         product = db.session.get(Product, product_id)
@@ -410,14 +384,12 @@ def create_app():
         if request.method == 'PUT':
             data = request.form
             product.name = data.get('name', product.name)
-            # FIX #11 — Conversion sécurisée du prix en PUT également
             product.price = _safe_float(data.get('price'), default=product.price)
             db.session.commit()
             return jsonify({"message": "Mis à jour"}), 200
 
         return jsonify(product.to_dict()), 200
 
-    # --- BRIDGE POUR ROUTE OUBLIÉE ---
     @app.route('/api/forgot-password', methods=['POST', 'OPTIONS'])
     def forgot_password_bridge():
         if request.method == 'OPTIONS':
@@ -425,7 +397,6 @@ def create_app():
         from routes.auth import forgot_password
         return forgot_password()
 
-    # ENREGISTREMENT BLUEPRINTS
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(products_bp, url_prefix="/api/products")
     app.register_blueprint(cart_bp, url_prefix="/api/cart")
@@ -436,8 +407,6 @@ def create_app():
 
     with app.app_context():
         db.create_all()
-
-        # TF-IDF Engine
         try:
             from ml.tfidf_engine import TFIDFEngine
             app.tfidf_engine = TFIDFEngine()
@@ -446,7 +415,6 @@ def create_app():
         except Exception as e:
             print(f"⚠️ Erreur TF-IDF Engine: {e}")
 
-        # RL Agent
         try:
             from ml.rl_agent import RLAgent
             app.rl_agent = RLAgent(
@@ -459,11 +427,9 @@ def create_app():
             print("✅ RL Agent chargé.")
         except Exception:
             class DummyRL:
-                def on_purchase(self, pid):
-                    print(f"Achat {pid}")
+                def on_purchase(self, pid): print(f"Achat {pid}")
             app.rl_agent = DummyRL()
 
-        # Spam Detector
         try:
             from ml.spam_detector import SpamDetector
             app.spam_detector = SpamDetector()
@@ -471,7 +437,6 @@ def create_app():
         except Exception as e:
             print(f"⚠️ Erreur Spam Detector: {e}")
 
-    # --- INITIALISATION BPM ---
     try:
         app.workflow_engine = WorkflowEngine()
         print("✅ Workflow Engine (BPM) chargé.")
@@ -480,8 +445,9 @@ def create_app():
 
     return app
 
-
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # Définition du port dynamique pour Render.com
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)

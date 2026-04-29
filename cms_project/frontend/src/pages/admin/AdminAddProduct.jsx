@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from "react"; // Ajout de useEffect
+import { useState, useRef, useEffect } from "react";
 import { productsAPI } from "../../services/api";
 import { useNavigate } from "react-router-dom";
 import Swal from 'sweetalert2'; 
-import axios from 'axios'; // Ou utilise ton instance API personnalisée
+import axios from 'axios';
 
 const CATEGORY_KEYWORDS = {
   informatique: ["ordinateur", "portable", "pc", "laptop", "gaming", "asus", "hp", "dell", "macbook", "intel", "amd", "nvidia", "ssd", "ram", "performance"],
@@ -16,7 +16,7 @@ export default function AdminAddProduct() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(null);
-  const [categories, setCategories] = useState([]); // État pour stocker les catégories
+  const [categories, setCategories] = useState([]);
   const [suggestedCategory, setSuggestedCategory] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -34,7 +34,7 @@ export default function AdminAddProduct() {
 
   const inferSuggestedCategory = (value) => {
     const text = normalizeText(value);
-    if (!text) return null;
+    if (!text || categories.length === 0) return null;
 
     let bestMatch = { label: null, score: 0 };
     Object.entries(CATEGORY_KEYWORDS).forEach(([label, words]) => {
@@ -48,11 +48,10 @@ export default function AdminAddProduct() {
     return categories.find((cat) => cat.name.toLowerCase().includes(bestMatch.label)) || null;
   };
 
-  // 1. CHARGER LES CATÉGORIES AU MONTAGE
+  // Charger les catégories au montage
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        // Remplace par ton endpoint réel (ex: /api/admin/categories)
         const res = await axios.get('http://localhost:5000/api/products/categories/all');
         setCategories(res.data);
       } catch (err) {
@@ -62,10 +61,15 @@ export default function AdminAddProduct() {
     fetchCategories();
   }, []);
 
+  // Déclencher la suggestion quand le nom ou la description change
   useEffect(() => {
-    const suggestion = inferSuggestedCategory(`${form.name} ${form.description}`);
-    setSuggestedCategory(suggestion);
-  }, [form.name, form.description, categories]);
+    if (!form.category_id) { // Ne suggérer que si l'utilisateur n'a pas encore choisi
+        const suggestion = inferSuggestedCategory(`${form.name} ${form.description}`);
+        setSuggestedCategory(suggestion);
+    } else {
+        setSuggestedCategory(null);
+    }
+  }, [form.name, form.description, categories, form.category_id]);
 
   const Toast = Swal.mixin({
     background: '#1f2937',
@@ -76,7 +80,6 @@ export default function AdminAddProduct() {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Nettoyer l'ancienne URL pour éviter les fuites mémoire
       if (preview) URL.revokeObjectURL(preview);
       setPreview(URL.createObjectURL(file));
     }
@@ -87,12 +90,14 @@ export default function AdminAddProduct() {
     setLoading(true);
     setError("");
 
-    let categoryId = form.category_id;
-    if (!categoryId && suggestedCategory) {
-      categoryId = suggestedCategory.id;
+    // Logique de sélection finale de l'ID de catégorie
+    let finalCategoryId = form.category_id;
+    if (!finalCategoryId && suggestedCategory) {
+      finalCategoryId = suggestedCategory.id;
     }
 
-    if (!form.name || !form.price || !categoryId) {
+    // Validation stricte avant envoi
+    if (!form.name.trim() || !form.price || !finalCategoryId) {
       setError("Le nom, le prix et la catégorie sont obligatoires.");
       setLoading(false);
       return;
@@ -100,11 +105,11 @@ export default function AdminAddProduct() {
 
     try {
       const formData = new FormData();
-      formData.append('name', form.name);
-      formData.append('price', form.price);
-      formData.append('stock', form.stock || 0);
-      formData.append('description', form.description);
-      formData.append('category_id', categoryId);
+      formData.append('name', form.name.trim());
+      formData.append('price', parseFloat(form.price));
+      formData.append('stock', parseInt(form.stock) || 0); // Convertit "" en 0 pour le backend
+      formData.append('description', form.description.trim());
+      formData.append('category_id', finalCategoryId);
 
       if (fileInputRef.current.files[0]) {
         formData.append('image', fileInputRef.current.files[0]);
@@ -115,15 +120,15 @@ export default function AdminAddProduct() {
       if (response.status === 201 || response.status === 200) {
         await Toast.fire({
           icon: 'success',
-          title: 'Produit ajouté !',
-          text: 'Le nouveau produit a été enregistré avec succès.',
+          title: 'Succès',
+          text: 'Le produit a été enregistré.',
           timer: 2000,
           showConfirmButton: false
         });
         navigate("/admin/produits"); 
       }
     } catch (err) {
-      const errorMsg = err.response?.data?.error || "Erreur lors de l'envoi";
+      const errorMsg = err.response?.data?.error || "Erreur serveur (500)";
       setError(errorMsg);
       Toast.fire({ icon: 'error', title: 'Erreur', text: errorMsg });
     } finally {
@@ -134,88 +139,82 @@ export default function AdminAddProduct() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 min-h-screen bg-black text-white">
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 shadow-2xl">
-        <h2 className="text-2xl font-bold mb-6">Nouveau Produit</h2>
+        <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+          <span className="w-2 h-8 bg-emerald-500 rounded-full"></span>
+          Nouveau Produit
+        </h2>
         
         {error && (
-          <div className="mb-4 p-3 bg-red-500/20 border border-red-500 rounded text-red-400 text-sm">
-            {error}
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-xl text-red-400 text-sm animate-pulse">
+            ⚠️ {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* NOM ET CATÉGORIE SUR LA MÊME LIGNE */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-xs text-gray-400 mb-1 ml-1 uppercase font-bold">Nom du produit</label>
+              <label className="block text-xs text-gray-400 mb-2 uppercase font-bold tracking-wider">Nom du produit</label>
               <input
-                required placeholder="Ex: Samsung S23 Ultra"
-                className="w-full bg-gray-800 p-3 rounded-xl outline-none border border-gray-700 focus:border-emerald-500"
+                required placeholder="Ex: Asus ROG Strix"
+                className="w-full bg-gray-800 p-3 rounded-xl outline-none border border-gray-700 focus:border-emerald-500 transition-all"
                 value={form.name} onChange={e => setForm({...form, name: e.target.value})}
               />
             </div>
             
-            {/* AJOUT DU SELECT DE CATÉGORIE */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1 ml-1 uppercase font-bold">Catégorie</label>
+              <label className="block text-xs text-gray-400 mb-2 uppercase font-bold tracking-wider">Catégorie</label>
               <select 
                 className="w-full bg-gray-800 p-3 rounded-xl outline-none border border-gray-700 focus:border-emerald-500 text-gray-300"
                 value={form.category_id}
                 onChange={e => setForm({...form, category_id: e.target.value})}
               >
-                <option value="" disabled>-- Sélectionner une catégorie --</option>
+                <option value="">-- Choisir manuellement --</option>
                 {categories.map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
-              {suggestedCategory && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <label className="text-[10px] text-gray-500 uppercase tracking-widest">Catégorie suggérée</label>
-                    <span className="text-[10px] uppercase tracking-widest bg-blue-500/15 text-blue-300 border border-blue-500/20 rounded-full px-2 py-1">
-                      Suggestion automatique
-                    </span>
+
+              {suggestedCategory && !form.category_id && (
+                <div className="mt-3 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between animate-fadeIn">
+                  <div className="text-[11px]">
+                    <span className="text-emerald-400 font-bold">Suggestion :</span> {suggestedCategory.name}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={suggestedCategory.name}
-                      className="flex-1 bg-gray-800 text-gray-300 p-3 rounded-xl border border-dashed border-emerald-500 outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setForm({...form, category_id: suggestedCategory.id})}
-                      className="px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs uppercase tracking-wider hover:bg-emerald-500 transition"
-                    >
-                      Utiliser
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm({...form, category_id: suggestedCategory.id})}
+                    className="text-[10px] bg-emerald-600 px-2 py-1 rounded-lg hover:bg-emerald-500"
+                  >
+                    Appliquer
+                  </button>
                 </div>
               )}
             </div>
           </div>
 
-          <div className="flex items-center space-x-4 bg-gray-800/50 p-3 rounded-xl border border-gray-700">
-            <input
-              type="file" ref={fileInputRef} onChange={handleFileChange}
-              className="flex-1 text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
-            />
-            {preview && <img src={preview} alt="Aperçu" className="w-12 h-12 object-cover rounded-lg border border-gray-600" />}
+          <div className="bg-gray-800/30 p-4 rounded-xl border border-dashed border-gray-700">
+            <label className="block text-xs text-gray-400 mb-3 uppercase font-bold tracking-wider">Image du produit</label>
+            <div className="flex items-center space-x-4">
+                <input
+                type="file" ref={fileInputRef} onChange={handleFileChange}
+                className="flex-1 text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-gray-700 file:text-emerald-400 hover:file:bg-gray-600 cursor-pointer"
+                />
+                {preview && <img src={preview} alt="Aperçu" className="w-16 h-16 object-cover rounded-xl border-2 border-emerald-500/50 shadow-emerald-500/20 shadow-lg" />}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-6">
             <div>
-              <label className="block text-xs text-gray-400 mb-1 ml-1 uppercase font-bold">Prix (Ar)</label>
+              <label className="block text-xs text-gray-400 mb-2 uppercase font-bold tracking-wider">Prix (Ar)</label>
               <input
-                type="number" placeholder="0.00"
+                type="number" placeholder="0"
                 className="w-full bg-gray-800 p-3 rounded-xl border border-gray-700 outline-none focus:border-emerald-500"
                 value={form.price} onChange={e => setForm({...form, price: e.target.value})}
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1 ml-1 uppercase font-bold">Stock initial</label>
+              <label className="block text-xs text-gray-400 mb-2 uppercase font-bold tracking-wider">Stock</label>
               <input
-                type="number" placeholder="Quantité"
+                type="number" placeholder="0"
                 className="w-full bg-gray-800 p-3 rounded-xl border border-gray-700 outline-none focus:border-emerald-500"
                 value={form.stock} onChange={e => setForm({...form, stock: e.target.value})}
               />
@@ -223,19 +222,19 @@ export default function AdminAddProduct() {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1 ml-1 uppercase font-bold">Description (IA TF-IDF)</label>
+            <label className="block text-xs text-gray-400 mb-2 uppercase font-bold tracking-wider">Description</label>
             <textarea
-              placeholder="Décrivez le produit pour améliorer les recommandations..."
-              className="w-full bg-gray-800 p-3 rounded-xl border border-gray-700 h-32 outline-none focus:border-emerald-500"
+              placeholder="Décrivez les caractéristiques techniques..."
+              className="w-full bg-gray-800 p-3 rounded-xl border border-gray-700 h-28 outline-none focus:border-emerald-500 resize-none"
               value={form.description} onChange={e => setForm({...form, description: e.target.value})}
             />
           </div>
 
           <button
             type="submit" disabled={loading}
-            className="w-full bg-emerald-600 py-4 rounded-xl font-bold hover:bg-emerald-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+            className="w-full bg-emerald-600 py-4 rounded-xl font-bold text-lg hover:bg-emerald-500 transition-all disabled:opacity-50 shadow-xl shadow-emerald-900/20"
           >
-            {loading ? "Envoi en cours..." : "Enregistrer le produit"}
+            {loading ? "Traitement en cours..." : "Enregistrer le produit"}
           </button>
         </form>
       </div>
