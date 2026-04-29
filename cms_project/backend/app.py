@@ -2,6 +2,7 @@ import os
 import re
 import time
 import uuid
+import traceback
 import cloudinary
 import cloudinary.uploader
 from flask import Flask, jsonify, request, send_from_directory
@@ -31,6 +32,13 @@ except ImportError:
         JWT_SECRET_KEY = "frederic-master-2-cybersecurity-key-2026-super-long"
         UPLOAD_FOLDER = os.path.abspath(os.path.join(os.getcwd(), 'static', 'uploads'))
         MAX_CONTENT_LENGTH = 10 * 1024 * 1024
+        # FIX #1 — Valeurs par défaut pour les attributs ML manquants dans la Config fallback
+        TFIDF_MAX_TAGS = 5
+        RL_LEARNING_RATE = 0.01
+        RL_DISCOUNT = 0.9
+        RL_EPSILON = 1.0
+        RL_EPSILON_DECAY = 0.995
+        RL_MIN_EPSILON = 0.01
 
 # 3. Configuration Cloudinary
 cloudinary.config(
@@ -71,7 +79,8 @@ def _normalize_text(text: str) -> str:
 
 
 def _get_default_category_id():
-    category = Category.query.get(1)
+    # FIX #2 — Category.query.get() est déprécié en SQLAlchemy 2.x, utiliser db.session.get()
+    category = db.session.get(Category, 1)
     if category:
         return category.id
     first = Category.query.first()
@@ -114,6 +123,23 @@ def upload_to_cloudinary(file, folder="cms_intelligent"):
     except Exception as e:
         print(f"Erreur Cloudinary upload: {e}")
         return None
+
+
+# FIX #3 — Fonction utilitaire de conversion sécurisée pour price/stock
+def _safe_float(value, default=0.0):
+    """Convertit en float sans planter sur chaîne vide ou None."""
+    try:
+        return float(value) if value not in (None, "", "null") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value, default=0):
+    """Convertit en int sans planter sur chaîne vide ou None."""
+    try:
+        return int(value) if value not in (None, "", "null") else default
+    except (TypeError, ValueError):
+        return default
 
 
 def create_app():
@@ -208,7 +234,8 @@ def create_app():
                     if category_id_raw:
                         try:
                             candidate_id = int(category_id_raw)
-                            if Category.query.get(candidate_id):
+                            # FIX #4 — Remplacer Category.query.get() déprécié
+                            if db.session.get(Category, candidate_id):
                                 category_id = candidate_id
                         except (TypeError, ValueError):
                             category_id = None
@@ -249,20 +276,28 @@ def create_app():
                             images_list.append(a_name)
 
                 # 4. CRÉATION DU PRODUIT
+                # FIX #5 — Utiliser _safe_float / _safe_int pour éviter ValueError sur chaîne vide
                 new_p = Product(
-                    name=request.form.get('name'),
-                    price=float(request.form.get('price', 0)),
-                    stock=int(request.form.get('stock', 0)),
+                    name=request.form.get('name', '').strip() or None,
+                    price=_safe_float(request.form.get('price')),
+                    stock=_safe_int(request.form.get('stock')),
                     description=request.form.get('description', ""),
                     category_id=category_id,
                     image_url=image_url
                 )
 
+                # FIX #6 — Vérification que le nom n'est pas vide (contrainte NOT NULL fréquente)
+                if not new_p.name:
+                    return jsonify({"error": "Le nom du produit est requis"}), 400
+
                 if hasattr(new_p, 'images_list'):
                     new_p.images_list = images_list
 
-                new_p.views = 0
-                new_p.ia_score = 0.5
+                # FIX #7 — Vérifier que views/ia_score existent comme attributs avant d'assigner
+                if hasattr(new_p, 'views'):
+                    new_p.views = 0
+                if hasattr(new_p, 'ia_score'):
+                    new_p.ia_score = 0.5
 
                 db.session.add(new_p)
                 db.session.flush()
@@ -276,7 +311,10 @@ def create_app():
 
                         row = app.tfidf_engine.vectorizer.transform([text_content]).toarray()[0]
                         feature_names = app.tfidf_engine.vectorizer.get_feature_names_out()
-                        top_indices = row.argsort()[-Config.TFIDF_MAX_TAGS:][::-1]
+
+                        # FIX #8 — getattr avec défaut pour TFIDF_MAX_TAGS
+                        max_tags = getattr(Config, 'TFIDF_MAX_TAGS', 5)
+                        top_indices = row.argsort()[-max_tags:][::-1]
 
                         for idx in top_indices:
                             if row[idx] > 0:
@@ -286,16 +324,22 @@ def create_app():
                                     tfidf_score=float(row[idx])
                                 ))
                     except Exception as e:
-                        print(f"Erreur IA Tags: {e}")
+                        # FIX #9 — Ne pas laisser l'erreur IA bloquer la création du produit
+                        print(f"Erreur IA Tags (non bloquant): {e}")
 
                 db.session.commit()
                 db.session.refresh(new_p)
 
                 return jsonify(new_p.to_dict()), 201
+
             except Exception as e:
                 db.session.rollback()
+                # FIX #10 — Toujours logger le traceback complet côté serveur pour debug
+                print(f"[ERREUR POST /api/products] {e}")
+                print(traceback.format_exc())
                 return jsonify({"error": str(e)}), 500
 
+        # GET — liste paginée
         page = request.args.get('page', 1, type=int)
         pagination = Product.query.options(joinedload(Product.category)).order_by(
             Product.id.desc()).paginate(page=page, per_page=100, error_out=False)
@@ -337,6 +381,7 @@ def create_app():
     def handle_single_product(product_id):
         if request.method == 'OPTIONS':
             return jsonify({}), 200
+
         product = db.session.get(Product, product_id)
         if not product:
             return jsonify({"error": "Produit introuvable"}), 404
@@ -345,7 +390,7 @@ def create_app():
             try:
                 product.views = (product.views or 0) + 1
                 db.session.commit()
-            except:
+            except Exception:
                 db.session.rollback()
 
         if request.method == 'DELETE':
@@ -365,7 +410,8 @@ def create_app():
         if request.method == 'PUT':
             data = request.form
             product.name = data.get('name', product.name)
-            product.price = float(data.get('price', product.price))
+            # FIX #11 — Conversion sécurisée du prix en PUT également
+            product.price = _safe_float(data.get('price'), default=product.price)
             db.session.commit()
             return jsonify({"message": "Mis à jour"}), 200
 
@@ -390,6 +436,8 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+
+        # TF-IDF Engine
         try:
             from ml.tfidf_engine import TFIDFEngine
             app.tfidf_engine = TFIDFEngine()
@@ -397,21 +445,25 @@ def create_app():
             print("✅ TF-IDF Engine et Tags IA chargés.")
         except Exception as e:
             print(f"⚠️ Erreur TF-IDF Engine: {e}")
+
+        # RL Agent
         try:
             from ml.rl_agent import RLAgent
             app.rl_agent = RLAgent(
-                lr=Config.RL_LEARNING_RATE,
-                gamma=Config.RL_DISCOUNT,
-                epsilon=Config.RL_EPSILON,
-                epsilon_decay=Config.RL_EPSILON_DECAY,
-                min_epsilon=Config.RL_MIN_EPSILON,
+                lr=getattr(Config, 'RL_LEARNING_RATE', 0.01),
+                gamma=getattr(Config, 'RL_DISCOUNT', 0.9),
+                epsilon=getattr(Config, 'RL_EPSILON', 1.0),
+                epsilon_decay=getattr(Config, 'RL_EPSILON_DECAY', 0.995),
+                min_epsilon=getattr(Config, 'RL_MIN_EPSILON', 0.01),
             )
             print("✅ RL Agent chargé.")
-        except:
+        except Exception:
             class DummyRL:
                 def on_purchase(self, pid):
                     print(f"Achat {pid}")
             app.rl_agent = DummyRL()
+
+        # Spam Detector
         try:
             from ml.spam_detector import SpamDetector
             app.spam_detector = SpamDetector()

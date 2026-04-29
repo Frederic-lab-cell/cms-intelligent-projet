@@ -1,6 +1,9 @@
 import axios from "axios";
 
-const api = axios.create({ baseURL: "http://localhost:5000/api" });
+// FIX — URL dynamique : variable d'environnement en production, localhost en développement
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+const api = axios.create({ baseURL: `${BASE_URL}/api` });
 
 /**
  * 1. INJECTION DU TOKEN JWT
@@ -26,7 +29,7 @@ api.interceptors.response.use(
       if (refresh) {
         try {
           const { data } = await axios.post(
-            "http://localhost:5000/api/auth/refresh",
+            `${BASE_URL}/api/auth/refresh`,
             {},
             { headers: { Authorization: `Bearer ${refresh}` } }
           );
@@ -53,18 +56,13 @@ export const authAPI = {
 
 // ── PRODUITS ─────────────────────────────────────────────────────────────────
 export const productsAPI = {
-  list:       (params) => api.get("/products/", { params }),
-  get:        (id)     => api.get(`/products/${id}/`),
-  latest:     ()       => api.get("/products/latest/"), 
-  categories: ()       => api.get("/products/categories/all/"),
-  
-  // CORRIGÉ : Ajout de l'argument "config" pour permettre le "Content-Type: undefined"
-  create: (formData, config = {}) => api.post("/products/", formData, config),
-  
-  // CORRIGÉ : Ajout de l'argument "config" pour permettre le "Content-Type: undefined"
-  update: (id, d, config = {})  => api.put(`/products/${id}/`, d, config),
-  
-  delete:     (id)     => api.delete(`/products/${id}/`),
+  list:       (params)      => api.get("/products/", { params }),
+  get:        (id)          => api.get(`/products/${id}/`),
+  latest:     ()            => api.get("/products/latest/"),
+  categories: ()            => api.get("/products/categories/all/"),
+  create:     (formData)    => api.post("/products/", formData),
+  update:     (id, formData)=> api.put(`/products/${id}/`, formData),
+  delete:     (id)          => api.delete(`/products/${id}/`),
 };
 
 // ── RECOMMANDATIONS (IA : Q-LEARNING & TF-IDF) ──────────────────────────────
@@ -76,11 +74,11 @@ export const recoAPI = {
 
 // ── PANIER ────────────────────────────────────────────────────────────────────
 export const cartAPI = {
-  get:         ()           => api.get("/cart/"),
-  add:         (pid, qty=1) => api.post("/cart/add", { product_id: pid, quantity: qty }),
-  updateItem: (iid, qty)    => api.put(`/cart/item/${iid}`, { quantity: qty }),
-  removeItem: (iid)         => api.delete(`/cart/item/${iid}`),
-  clear:       ()           => api.delete("/cart/clear"),
+  get:        ()           => api.get("/cart/"),
+  add:        (pid, qty=1) => api.post("/cart/add", { product_id: pid, quantity: qty }),
+  updateItem: (iid, qty)   => api.put(`/cart/item/${iid}`, { quantity: qty }),
+  removeItem: (iid)        => api.delete(`/cart/item/${iid}`),
+  clear:      ()           => api.delete("/cart/clear"),
 };
 
 // ── COMMANDES ─────────────────────────────────────────────────────────────────
@@ -98,21 +96,21 @@ export const messagesAPI = {
 
 // ── ADMINISTRATION (MAINTENANCE IA & SÉCURITÉ) ────────────────────────────────
 export const adminAPI = {
-  dashboard:      ()         => api.get("/admin/dashboard/"),
-  orders:         (params)   => api.get("/admin/orders/", { params }),
-  updateOrder:    (id, data) => api.put(`/admin/orders/${id}/status/`, data),
-  
-  messages:       (params)   => api.get("/admin/messages/", { params }),
-  markRead:       (id)       => api.patch(`/admin/messages/${id}/read/`),
-  
-  feedbackSpam:   (id, isSpam) => api.put(`/admin/messages/${id}/feedback/`, { is_spam: isSpam }),
-  clearSpam:      ()         => api.delete("/admin/messages/clear-spam/"),
-  
-  runRL:          (data)     => api.post("/admin/rl/episode/", data),
-  rlMetrics:      ()         => api.get("/admin/rl/metrics/"),
-  recomputeTFIDF: ()         => api.post("/admin/tfidf/recompute/"),
-  users:          ()         => api.get("/admin/users/"),
-  spamWords:      ()         => api.get("/admin/spam/words/"),
+  dashboard:      ()            => api.get("/admin/dashboard/"),
+  orders:         (params)      => api.get("/admin/orders/", { params }),
+  updateOrder:    (id, data)    => api.put(`/admin/orders/${id}/status/`, data),
+
+  messages:       (params)      => api.get("/admin/messages/", { params }),
+  markRead:       (id)          => api.patch(`/admin/messages/${id}/read/`),
+
+  feedbackSpam:   (id, isSpam)  => api.put(`/admin/messages/${id}/feedback/`, { is_spam: isSpam }),
+  clearSpam:      ()            => api.delete("/admin/messages/clear-spam/"),
+
+  runRL:          (data)        => api.post("/admin/rl/episode/", data),
+  rlMetrics:      ()            => api.get("/admin/rl/metrics/"),
+  recomputeTFIDF: ()            => api.post("/admin/tfidf/recompute/"),
+  users:          ()            => api.get("/admin/users/"),
+  spamWords:      ()            => api.get("/admin/spam/words/"),
 };
 
 export default api;

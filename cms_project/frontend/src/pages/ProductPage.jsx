@@ -3,35 +3,58 @@ import { useParams, useNavigate } from "react-router-dom";
 import { productsAPI } from "../services/api";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
-import ProductCard from "../components/ProductCard";
-import toast from "react-hot-toast";
 import ProductSuggestions from "../components/ProductSuggestions";
+import toast from "react-hot-toast";
 
 const API_BASE_URL = "http://localhost:5000";
+
+// FIX #1 — Labels d'angle dynamiques et corrects (Face, Dos, Gauche, Droite)
+const ANGLE_LABELS = ["F", "D", "G", "Dr"];
+
+// FIX #2 — Formatage prix sécurisé (évite crash si price est null/undefined)
+function formatPrice(price) {
+  const p = parseFloat(price);
+  if (isNaN(p)) return "Prix non défini";
+  if (p === 0) return "Gratuit";
+  return `${p.toFixed(2)} Ar`;
+}
+
+// FIX #3 — Résolution d'URL image centralisée et robuste
+function resolveImageUrl(url) {
+  if (!url || url === "default.png") {
+    return "https://via.placeholder.com/400?text=Image+non+disponible";
+  }
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${API_BASE_URL}/static/uploads/${url}`;
+}
 
 // ── Tunnel de vérification achat ──────────────────────────────────────────────
 function PurchaseTunnel({ product, onClose, onConfirm }) {
   const [step, setStep] = useState(0);
+
+  // FIX #4 — Guards sur product.tags et product.price qui peuvent être null
+  const topTags = (product.tags || []).slice(0, 3).map(t => t.term).join(", ") || "—";
+  const priceLabel = formatPrice(product.price);
+  const categoryName = product.category?.name || "Général";
+  const rlScore = Math.round(product.rl_score || 0);
 
   const steps = [
     {
       badge: "Étape 1/3 — Intention",
       badgeColor: "bg-blue-500/20 text-blue-400 border-blue-500/30",
       title: `Souhaitez-vous vraiment acheter ce produit ?`,
-      hint: `Ce produit a ${product.views || 0} vues et ${product.sales || 0} ventes. `
-          + `Tags TF-IDF : ${(product.tags || []).slice(0, 3).map(t => t.term).join(", ") || "—"}.`,
+      hint: `Ce produit a ${product.views || 0} vues et ${product.sales || 0} ventes. Tags TF-IDF : ${topTags}.`,
     },
     {
       badge: "Étape 2/3 — Besoin",
       badgeColor: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-      title: `Ce produit répond-il à votre besoin de "${product.category?.name || 'Général'}" ?`,
-      hint: `Score IA : ${Math.round(product.rl_score || 0)}%. `
-          + `Ces caractéristiques correspondent-elles à votre recherche ?`,
+      title: `Ce produit répond-il à votre besoin de "${categoryName}" ?`,
+      hint: `Score IA : ${rlScore}%. Ces caractéristiques correspondent-elles à votre recherche ?`,
     },
     {
       badge: "Étape 3/3 — Confirmation",
       badgeColor: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-      title: `Confirmer l'achat pour ${product.price === 0 ? "gratuit" : product.price.toFixed(2) + " Ar"} ?`,
+      title: `Confirmer l'achat pour ${priceLabel} ?`,
       hint: "En confirmant, cet achat enrichira l'agent Q-Learning et améliorera les suggestions futures.",
     },
   ];
@@ -40,7 +63,7 @@ function PurchaseTunnel({ product, onClose, onConfirm }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full animate-in fade-in zoom-in duration-200 shadow-2xl">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full shadow-2xl">
         <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium border font-mono mb-4 ${current.badgeColor}`}>
           {current.badge}
         </span>
@@ -53,25 +76,33 @@ function PurchaseTunnel({ product, onClose, onConfirm }) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-medium text-white text-sm truncate">{product.name}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{product.category?.name}</p>
-            <p className="text-base font-bold text-emerald-400 mt-2 font-mono">
-              {product.price === 0 ? "Gratuit" : `${product.price.toFixed(2)} Ar`}
-            </p>
+            <p className="text-xs text-gray-400 mt-0.5">{categoryName}</p>
+            {/* FIX #5 — Utilisation de formatPrice() au lieu de .toFixed() direct */}
+            <p className="text-base font-bold text-emerald-400 mt-2 font-mono">{priceLabel}</p>
           </div>
         </div>
 
         <p className="text-sm text-gray-400 mb-6">{current.hint}</p>
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 text-sm font-medium transition">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 text-sm font-medium transition"
+          >
             ✕ Annuler
           </button>
           {step < 2 ? (
-            <button onClick={() => setStep(s => s + 1)} className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition">
+            <button
+              onClick={() => setStep(s => s + 1)}
+              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition"
+            >
               Continuer →
             </button>
           ) : (
-            <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition">
+            <button
+              onClick={onConfirm}
+              className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition"
+            >
               ✓ Confirmer
             </button>
           )}
@@ -92,23 +123,23 @@ export default function ProductPage() {
   const [loading, setLoading] = useState(true);
   const [qty, setQty] = useState(1);
   const [showTunnel, setShowTunnel] = useState(false);
-  
-  // 🔄 État pour gérer la galerie d'images
   const [activeImgIndex, setActiveImgIndex] = useState(0);
 
   useEffect(() => {
     setLoading(true);
-    productsAPI.get(id)
-      .then(r => {
-        setProduct(r.data);
-        setActiveImgIndex(0); // Reset l'image au chargement d'un nouveau produit
-      })
+    setActiveImgIndex(0);
+    productsAPI
+      .get(id)
+      .then(r => setProduct(r.data))
       .catch(() => toast.error("Erreur de chargement du produit"))
       .finally(() => setLoading(false));
   }, [id]);
 
   const handleAddToCart = () => {
-    if (!user) { toast.error("Connectez-vous pour acheter"); return; }
+    if (!user) {
+      toast.error("Connectez-vous pour acheter");
+      return;
+    }
     setShowTunnel(true);
   };
 
@@ -118,65 +149,76 @@ export default function ProductPage() {
     if (result.success) {
       toast.success("Ajouté au panier !");
       navigate("/panier");
-    } else toast.error(result.error);
+    } else {
+      toast.error(result.error);
+    }
   };
 
-  const getImageUrl = (url) => {
-    if (!url) return "https://via.placeholder.com/400?text=Image+non+disponible";
-    if (url.startsWith('http')) return url;
-    return `${API_BASE_URL}/static/uploads/${url}`;
-  };
+  if (loading) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-12">
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl h-96 animate-pulse" />
+      </div>
+    );
+  }
 
-  if (loading) return (
-    <div className="max-w-5xl mx-auto px-4 py-12">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl h-96 animate-pulse" />
-    </div>
-  );
+  if (!product) {
+    return (
+      <div className="text-center py-20 text-gray-500 font-mono">Produit introuvable</div>
+    );
+  }
 
-  if (!product) return (
-    <div className="text-center py-20 text-gray-500 font-mono">Produit introuvable</div>
-  );
+  const outOfStock = (product.stock ?? 0) <= 0;
 
-  const outOfStock = product.stock <= 0;
-  
-  // Construction de la liste des images (support multi-images)
-  const images = product.images_list && product.images_list.length > 0 
-    ? product.images_list 
-    : [product.image_url];
+  // FIX #6 — Construction robuste de la galerie : filtre les URLs nulles/vides
+  const rawImages =
+    product.images_list && product.images_list.length > 0
+      ? product.images_list
+      : [product.image_url];
+  const images = rawImages.filter(Boolean);
+  if (images.length === 0) images.push("default.png");
+
+  // FIX #7 — activeImgIndex borné à la taille réelle de la galerie
+  const safeIndex = Math.min(activeImgIndex, images.length - 1);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-10">
       <div className="grid md:grid-cols-2 gap-8 mb-12">
-        
+
         {/* 🖼️ Section Images (Galerie Interactive) */}
         <div className="space-y-4">
           <div className="bg-gray-900 border border-gray-800 rounded-2xl aspect-square flex items-center justify-center overflow-hidden relative shadow-inner">
-            <img 
-              src={getImageUrl(images[activeImgIndex])} 
+            <img
+              src={resolveImageUrl(images[safeIndex])}
               alt={product.name}
               className="w-full h-full object-contain p-4 transition-all duration-300"
-              onError={(e) => { e.target.src = "https://via.placeholder.com/400?text=Image+Introuvable"; }}
+              onError={e => {
+                e.target.src = "https://via.placeholder.com/400?text=Image+Introuvable";
+              }}
             />
-            
-            {/* Overlay d'angle (Face/Dos/etc) */}
+
+            {/* FIX #8 — Labels d'angle dynamiques sans doublon */}
             <div className="absolute bottom-4 right-4 flex gap-1.5">
-              {['F', 'D', 'G', 'D'].slice(0, images.length).map((label, idx) => (
-                <div 
+              {images.map((_, idx) => (
+                <button
                   key={idx}
-                  className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold border ${
-                    activeImgIndex === idx 
-                    ? "bg-emerald-500 border-emerald-400 text-white" 
-                    : "bg-gray-900/80 border-gray-700 text-gray-400"
+                  onClick={() => setActiveImgIndex(idx)}
+                  className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold border transition ${
+                    safeIndex === idx
+                      ? "bg-emerald-500 border-emerald-400 text-white"
+                      : "bg-gray-900/80 border-gray-700 text-gray-400 hover:border-gray-500"
                   }`}
                 >
-                  {label}
-                </div>
+                  {ANGLE_LABELS[idx] ?? idx + 1}
+                </button>
               ))}
             </div>
 
             {outOfStock && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                <span className="text-red-400 font-bold text-xl uppercase tracking-widest border-2 border-red-400 px-4 py-2 rounded-lg">Rupture</span>
+                <span className="text-red-400 font-bold text-xl uppercase tracking-widest border-2 border-red-400 px-4 py-2 rounded-lg">
+                  Rupture
+                </span>
               </div>
             )}
           </div>
@@ -189,10 +231,19 @@ export default function ProductPage() {
                   key={idx}
                   onClick={() => setActiveImgIndex(idx)}
                   className={`aspect-square rounded-xl border-2 overflow-hidden transition-all p-1 bg-gray-900 ${
-                    activeImgIndex === idx ? "border-emerald-500 scale-95" : "border-gray-800 hover:border-gray-600"
+                    safeIndex === idx
+                      ? "border-emerald-500 scale-95"
+                      : "border-gray-800 hover:border-gray-600"
                   }`}
                 >
-                  <img src={getImageUrl(img)} className="w-full h-full object-contain" alt={`Vue ${idx}`} />
+                  <img
+                    src={resolveImageUrl(img)}
+                    className="w-full h-full object-contain"
+                    alt={`Vue ${idx + 1}`}
+                    onError={e => {
+                      e.target.src = "https://via.placeholder.com/80?text=?";
+                    }}
+                  />
                 </button>
               ))}
             </div>
@@ -201,35 +252,49 @@ export default function ProductPage() {
 
         {/* ℹ️ Section Info */}
         <div>
-          <p className="text-sm text-gray-500 mb-2 uppercase tracking-widest">{product.category?.name}</p>
+          <p className="text-sm text-gray-500 mb-2 uppercase tracking-widest">
+            {product.category?.name}
+          </p>
           <h1 className="text-3xl font-bold text-white mb-4">{product.name}</h1>
 
           <div className="flex items-baseline gap-3 mb-6">
+            {/* FIX #9 — Utilisation de formatPrice() pour affichage sécurisé */}
             <span className="text-3xl font-bold text-emerald-400 font-mono">
-              {product.price === 0 ? "Gratuit" : `${product.price.toLocaleString()} Ar`}
+              {formatPrice(product.price)}
             </span>
-            <span className={`text-sm font-medium px-3 py-1 rounded-full border ${
-              outOfStock ? "bg-red-500/10 text-red-400 border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-            }`}>
+            <span
+              className={`text-sm font-medium px-3 py-1 rounded-full border ${
+                outOfStock
+                  ? "bg-red-500/10 text-red-400 border-red-500/20"
+                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              }`}
+            >
               {outOfStock ? "Indisponible" : `En stock (${product.stock})`}
             </span>
           </div>
 
           <p className="text-gray-400 text-base leading-relaxed mb-8 border-l-2 border-gray-800 pl-4">
-            {product.description || "Aucune description disponible pour ce produit intelligent."}
+            {product.description || "Aucune description disponible pour ce produit."}
           </p>
 
           {/* Tags IA TF-IDF */}
           {product.tags?.length > 0 && (
             <div className="mb-8">
-              <p className="text-xs text-gray-500 font-mono mb-3 uppercase tracking-wider"></p>
+              <p className="text-xs text-gray-500 font-mono mb-3 uppercase tracking-wider">
+                Tags IA · TF-IDF
+              </p>
               <div className="flex flex-wrap gap-2">
                 {product.tags.map((tag, i) => {
                   const score = tag.tfidf_score || 0;
                   return (
-                    <span key={i} className={`px-3 py-1 rounded-full text-xs font-mono font-medium flex items-center gap-2 border transition-colors ${
-                      score >= 0.2 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-gray-800/50 text-gray-400 border-gray-700"
-                    }`}>
+                    <span
+                      key={i}
+                      className={`px-3 py-1 rounded-full text-xs font-mono font-medium flex items-center gap-2 border transition-colors ${
+                        score >= 0.2
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          : "bg-gray-800/50 text-gray-400 border-gray-700"
+                      }`}
+                    >
                       {tag.term}
                       <span className="opacity-40 text-[9px]">{score.toFixed(2)}</span>
                     </span>
@@ -248,12 +313,22 @@ export default function ProductPage() {
           {!outOfStock && (
             <div className="flex items-center gap-4">
               <div className="flex items-center border border-gray-700 rounded-xl overflow-hidden bg-gray-900 shadow-inner">
-                <button onClick={() => setQty(q => Math.max(1, q - 1))} className="px-5 py-3 text-gray-400 hover:text-white hover:bg-gray-800 transition">−</button>
+                <button
+                  onClick={() => setQty(q => Math.max(1, q - 1))}
+                  className="px-5 py-3 text-gray-400 hover:text-white hover:bg-gray-800 transition"
+                >
+                  −
+                </button>
                 <span className="px-4 text-white font-mono font-bold">{qty}</span>
-                <button onClick={() => setQty(q => Math.min(product.stock, q + 1))} className="px-5 py-3 text-gray-400 hover:text-white hover:bg-gray-800 transition">+</button>
+                <button
+                  onClick={() => setQty(q => Math.min(product.stock, q + 1))}
+                  className="px-5 py-3 text-gray-400 hover:text-white hover:bg-gray-800 transition"
+                >
+                  +
+                </button>
               </div>
-              <button 
-                onClick={handleAddToCart} 
+              <button
+                onClick={handleAddToCart}
                 className="flex-1 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg shadow-emerald-900/20 transition active:scale-95"
               >
                 🛒 Ajouter au panier
@@ -263,18 +338,24 @@ export default function ProductPage() {
         </div>
       </div>
 
-      {/*  Recommandations IA */}
+      {/* FIX #10 — Titres de la section Recommandations IA remplis */}
       <div className="mt-16 pt-12 border-t border-gray-800">
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400">
-            
+          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-xl">
+            🤖
           </div>
-          <h2 className="text-xl font-bold text-white"></h2>
+          <h2 className="text-xl font-bold text-white">Suggestions IA</h2>
         </div>
         <ProductSuggestions productId={product.id} />
       </div>
 
-      {showTunnel && <PurchaseTunnel product={product} onClose={() => setShowTunnel(false)} onConfirm={handleConfirm} />}
+      {showTunnel && (
+        <PurchaseTunnel
+          product={product}
+          onClose={() => setShowTunnel(false)}
+          onConfirm={handleConfirm}
+        />
+      )}
     </div>
   );
 }
@@ -283,7 +364,9 @@ function Stat({ label, value, accent }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-center flex-1 transition-colors hover:border-gray-700">
       <p className="text-[10px] text-gray-500 mb-1 uppercase font-bold tracking-tighter">{label}</p>
-      <p className={`font-bold font-mono text-lg ${accent ? "text-emerald-400" : "text-white"}`}>{value}</p>
+      <p className={`font-bold font-mono text-lg ${accent ? "text-emerald-400" : "text-white"}`}>
+        {value}
+      </p>
     </div>
   );
 }
