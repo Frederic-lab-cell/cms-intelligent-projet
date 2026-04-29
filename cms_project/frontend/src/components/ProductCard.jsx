@@ -4,8 +4,9 @@ import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
 import toast from "react-hot-toast";
 
-// ✅ CORRECTION : Utilise la variable d'environnement Vite
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+// ✅ CORRECTION : Fiarovana ny URL (manala slash any amin'ny farany raha misy)
+const rawUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const BASE_URL = rawUrl.replace(/\/$/, ""); 
 
 const DEFAULT_IMAGE = "https://placehold.co/400x300/1f2937/6b7280?text=No+Image";
 
@@ -15,9 +16,10 @@ export default function ProductCard({ product, showSimilarity = false }) {
   
   const [activeImgIndex, setActiveImgIndex] = useState(0);
 
-  const images = product.images_list && product.images_list.length > 0 
+  // Fiarovana raha toa ka tsy misy ny images_list
+  const images = product?.images_list && product?.images_list.length > 0 
     ? product.images_list 
-    : [product.image_url];
+    : [product?.image_url];
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -30,13 +32,15 @@ export default function ProductCard({ product, showSimilarity = false }) {
     else toast.error(result.error);
   };
 
-  const outOfStock = !product.in_stock;
+  const outOfStock = !product?.in_stock;
 
   const formatImageUrl = (url) => {
     if (!url || url === "default.png") return DEFAULT_IMAGE;
-    // ✅ Si l'URL est déjà une URL Cloudinary ou externe
+    
+    // Raha efa URL feno (Cloudinary na hafa)
     if (url.startsWith("http")) return url;
-    // ✅ Sinon, construire l'URL avec le backend
+    
+    // Manadio ny URL alohan'ny hanampiana ny BASE_URL
     const cleanUrl = url.startsWith("/") ? url : `/${url}`;
     return `${BASE_URL}/static/uploads${cleanUrl}`;
   };
@@ -49,10 +53,10 @@ export default function ProductCard({ product, showSimilarity = false }) {
     >
       {/* Zone Image */}
       <div className="relative aspect-[4/3] bg-gray-800 overflow-hidden">
-        <Link to={`/produit/${product.id}`} className="block w-full h-full">
+        <Link to={`/produit/${product?.id}`} className="block w-full h-full">
           <img
-            src={formatImageUrl(images[activeImgIndex] || product.image_url)}
-            alt={product.name}
+            src={formatImageUrl(images[activeImgIndex] || product?.image_url)}
+            alt={product?.name}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
             onError={(e) => {
               e.target.onerror = null;
@@ -86,7 +90,7 @@ export default function ProductCard({ product, showSimilarity = false }) {
               Rupture
             </span>
           )}
-          {!outOfStock && product.stock <= 5 && (
+          {!outOfStock && product?.stock <= 5 && (
             <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500 text-black">
               Plus que {product.stock} !
             </span>
@@ -95,7 +99,7 @@ export default function ProductCard({ product, showSimilarity = false }) {
         
         <div className="absolute top-2 right-2">
           <span className="px-2 py-0.5 rounded-md text-xs font-mono bg-gray-900/80 text-emerald-400">
-            RL {Math.round(product.rl_score)}
+            RL {Math.round(product?.rl_score || 0)}
           </span>
         </div>
       </div>
@@ -104,10 +108,10 @@ export default function ProductCard({ product, showSimilarity = false }) {
       <div className="flex flex-col flex-1 p-4">
         <div className="flex-1">
           <div className="flex items-start justify-between gap-2 mb-2">
-            <Link to={`/produit/${product.id}`} className="flex-1">
-              <p className="text-xs text-gray-500 uppercase">{product.category?.name}</p>
+            <Link to={`/produit/${product?.id}`} className="flex-1">
+              <p className="text-xs text-gray-500 uppercase">{product?.category?.name}</p>
               <h3 className="font-semibold text-white text-sm leading-tight group-hover:text-emerald-400 transition-colors line-clamp-2">
-                {product.name}
+                {product?.name}
               </h3>
             </Link>
             
@@ -125,7 +129,7 @@ export default function ProductCard({ product, showSimilarity = false }) {
           </div>
 
           {/* Tags TF-IDF */}
-          {product.tags?.length > 0 && (
+          {product?.tags?.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-3">
               {product.tags.slice(0, 3).map((tag, i) => (
                 <span key={i} className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-gray-800 text-gray-400 border border-gray-700">
@@ -139,7 +143,7 @@ export default function ProductCard({ product, showSimilarity = false }) {
         {/* Prix et Bouton Panier */}
         <div className="flex items-center justify-between gap-2 pt-3 border-t border-gray-800">
           <span className="text-lg font-bold text-white">
-            {product.price.toLocaleString()} Ar
+            {product?.price?.toLocaleString() || 0} Ar
           </span>
           <button
             onClick={handleAdd}
