@@ -2,6 +2,8 @@ import os
 import re
 import time
 import uuid
+import cloudinary
+import cloudinary.uploader
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -28,7 +30,14 @@ except ImportError:
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         JWT_SECRET_KEY = "frederic-master-2-cybersecurity-key-2026-super-long"
         UPLOAD_FOLDER = os.path.abspath(os.path.join(os.getcwd(), 'static', 'uploads'))
-        MAX_CONTENT_LENGTH = 10 * 1024 * 1024 
+        MAX_CONTENT_LENGTH = 10 * 1024 * 1024
+
+# 3. Configuration Cloudinary
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME", "dfxhm9k3i"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY", "217318259948251"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET", "kTT1ctAQ4ocFHkdVOoSkOlHfNDI")
+)
 
 # Importation des Blueprints
 from routes.auth import auth_bp
@@ -93,9 +102,23 @@ def infer_category_id(name: str, description: str) -> int:
     return _get_default_category_id()
 
 
+def upload_to_cloudinary(file, folder="cms_intelligent"):
+    """Upload un fichier sur Cloudinary et retourne l'URL sécurisée."""
+    try:
+        result = cloudinary.uploader.upload(
+            file,
+            folder=folder,
+            resource_type="image"
+        )
+        return result["secure_url"]
+    except Exception as e:
+        print(f"Erreur Cloudinary upload: {e}")
+        return None
+
+
 def create_app():
     app = Flask(__name__)
-    app.url_map.strict_slashes = False 
+    app.url_map.strict_slashes = False
     app.config.from_object(Config)
 
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
@@ -103,18 +126,18 @@ def create_app():
 
     # --- CONFIGURATION CORS ---
     CORS(app, resources={r"/api/*": {"origins": [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://cms-intelligent-frontend.onrender.com"
-]}},
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-    
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://cms-intelligent-frontend.onrender.com"
+    ]}},
+         supports_credentials=True,
+         allow_headers=["Content-Type", "Authorization"],
+         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+
     JWTManager(app)
     db.init_app(app)
 
-    # --- SERVIR LES IMAGES ---
+    # --- SERVIR LES IMAGES LOCALES (fallback) ---
     @app.route('/static/uploads/<filename>')
     def uploaded_file(filename):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -129,7 +152,8 @@ def create_app():
     # --- ROUTE LATEST ---
     @app.route('/api/products/latest', methods=['GET', 'OPTIONS'])
     def get_latest_products():
-        if request.method == 'OPTIONS': return jsonify({}), 200
+        if request.method == 'OPTIONS':
+            return jsonify({}), 200
         try:
             products = Product.query.order_by(Product.id.desc()).limit(3).all()
             return jsonify([p.to_dict() for p in products]), 200
@@ -140,13 +164,16 @@ def create_app():
     @app.route('/api/products/categories/all', methods=['GET', 'OPTIONS'])
     @app.route('/api/products/categories', methods=['GET', 'POST', 'OPTIONS'])
     def handle_categories_root():
-        if request.method == 'OPTIONS': return jsonify({}), 200
+        if request.method == 'OPTIONS':
+            return jsonify({}), 200
         if request.method == 'POST':
             data = request.get_json()
             name = data.get('name', '').strip()
-            if not name: return jsonify({"error": "Nom requis"}), 400
+            if not name:
+                return jsonify({"error": "Nom requis"}), 400
             existing = Category.query.filter_by(name=name).first()
-            if existing: return jsonify({'id': existing.id, 'name': existing.name}), 200
+            if existing:
+                return jsonify({'id': existing.id, 'name': existing.name}), 200
             try:
                 new_cat = Category(name=name, slug=name.lower().replace(" ", "-"))
                 db.session.add(new_cat)
@@ -161,8 +188,9 @@ def create_app():
     # --- ROUTES PRODUITS ---
     @app.route('/api/products', methods=['GET', 'POST', 'OPTIONS'])
     def handle_products():
-        if request.method == 'OPTIONS': return jsonify({}), 200
-        
+        if request.method == 'OPTIONS':
+            return jsonify({}), 200
+
         if request.method == 'POST':
             try:
                 # 1. GESTION DYNAMIQUE DE LA CATÉGORIE
@@ -191,26 +219,36 @@ def create_app():
                             request.form.get('description', '')
                         )
 
-                # 2. GESTION IMAGE PRINCIPALE
+                # 2. GESTION IMAGE PRINCIPALE — CLOUDINARY
                 file = request.files.get('image')
                 image_url = "default.png"
                 if file and file.filename != '':
-                    ext = os.path.splitext(secure_filename(file.filename))[1]
-                    unique_filename = f"main_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
-                    file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-                    image_url = unique_filename
+                    cloudinary_url = upload_to_cloudinary(file, folder="cms_intelligent/products")
+                    if cloudinary_url:
+                        image_url = cloudinary_url
+                    else:
+                        # Fallback local si Cloudinary échoue
+                        ext = os.path.splitext(secure_filename(file.filename))[1]
+                        unique_filename = f"main_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+                        file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
+                        image_url = unique_filename
 
-                # GESTION DES ANGLES (MULTI-IMAGES)
+                # 3. GESTION DES ANGLES (MULTI-IMAGES) — CLOUDINARY
                 add_files = request.files.getlist('additional_images')
                 images_list = [image_url]
                 for a_file in add_files:
                     if a_file.filename != '':
-                        ext = os.path.splitext(secure_filename(a_file.filename))[1]
-                        a_name = f"angle_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
-                        a_file.save(os.path.join(app.config['UPLOAD_FOLDER'], a_name))
-                        images_list.append(a_name)
+                        cloudinary_url = upload_to_cloudinary(a_file, folder="cms_intelligent/products")
+                        if cloudinary_url:
+                            images_list.append(cloudinary_url)
+                        else:
+                            # Fallback local
+                            ext = os.path.splitext(secure_filename(a_file.filename))[1]
+                            a_name = f"angle_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+                            a_file.save(os.path.join(app.config['UPLOAD_FOLDER'], a_name))
+                            images_list.append(a_name)
 
-                # 3. CRÉATION DU PRODUIT
+                # 4. CRÉATION DU PRODUIT
                 new_p = Product(
                     name=request.form.get('name'),
                     price=float(request.form.get('price', 0)),
@@ -224,12 +262,12 @@ def create_app():
                     new_p.images_list = images_list
 
                 new_p.views = 0
-                new_p.ia_score = 0.5 
+                new_p.ia_score = 0.5
 
                 db.session.add(new_p)
                 db.session.flush()
 
-                # 4. GÉNÉRATION DES TAGS IA
+                # 5. GÉNÉRATION DES TAGS IA
                 if hasattr(app, 'tfidf_engine'):
                     try:
                         text_content = f"{new_p.name} {new_p.description}"
@@ -251,23 +289,22 @@ def create_app():
                         print(f"Erreur IA Tags: {e}")
 
                 db.session.commit()
-                
-                # --- FIX CORRECTION : Recharger l'objet pour inclure la catégorie ---
-                db.session.refresh(new_p) 
-                
+                db.session.refresh(new_p)
+
                 return jsonify(new_p.to_dict()), 201
             except Exception as e:
                 db.session.rollback()
                 return jsonify({"error": str(e)}), 500
 
         page = request.args.get('page', 1, type=int)
-        pagination = Product.query.options(joinedload(Product.category)).order_by(Product.id.desc()).paginate(page=page, per_page=100, error_out=False)
+        pagination = Product.query.options(joinedload(Product.category)).order_by(
+            Product.id.desc()).paginate(page=page, per_page=100, error_out=False)
         return jsonify({
             "products": [p.to_dict() for p in pagination.items],
             "total": pagination.total
         }), 200
 
-    # --- 🤖 ROUTE SUGGESTION IA ---
+    # --- ROUTE SUGGESTION IA ---
     @app.route('/api/products/suggestions/<int:product_id>', methods=['GET'])
     def get_ai_suggestions(product_id):
         product = db.session.get(Product, product_id)
@@ -298,21 +335,26 @@ def create_app():
 
     @app.route('/api/products/<int:product_id>', methods=['GET', 'PUT', 'DELETE', 'OPTIONS'])
     def handle_single_product(product_id):
-        if request.method == 'OPTIONS': return jsonify({}), 200
+        if request.method == 'OPTIONS':
+            return jsonify({}), 200
         product = db.session.get(Product, product_id)
-        if not product: return jsonify({"error": "Produit introuvable"}), 404
+        if not product:
+            return jsonify({"error": "Produit introuvable"}), 404
 
         if request.method == 'GET' and hasattr(product, 'views'):
             try:
                 product.views = (product.views or 0) + 1
                 db.session.commit()
-            except: db.session.rollback()
+            except:
+                db.session.rollback()
 
         if request.method == 'DELETE':
             try:
-                if CartItem: db.session.execute(db.delete(CartItem).where(CartItem.product_id == product_id))
+                if CartItem:
+                    db.session.execute(db.delete(CartItem).where(CartItem.product_id == product_id))
                 db.session.execute(db.delete(Tag).where(Tag.product_id == product_id))
-                if OrderItem: db.session.execute(db.delete(OrderItem).where(OrderItem.product_id == product_id))
+                if OrderItem:
+                    db.session.execute(db.delete(OrderItem).where(OrderItem.product_id == product_id))
                 db.session.delete(product)
                 db.session.commit()
                 return jsonify({"message": "Supprimé"}), 200
@@ -334,7 +376,6 @@ def create_app():
     def forgot_password_bridge():
         if request.method == 'OPTIONS':
             return jsonify({}), 200
-        # Importation locale pour éviter les boucles d'importation circulaires
         from routes.auth import forgot_password
         return forgot_password()
 
@@ -352,7 +393,6 @@ def create_app():
         try:
             from ml.tfidf_engine import TFIDFEngine
             app.tfidf_engine = TFIDFEngine()
-            # Générer les tags IA au démarrage
             app.tfidf_engine.fit_from_db()
             print("✅ TF-IDF Engine et Tags IA chargés.")
         except Exception as e:
@@ -369,17 +409,16 @@ def create_app():
             print("✅ RL Agent chargé.")
         except:
             class DummyRL:
-                def on_purchase(self, pid): print(f"Achat {pid}")
+                def on_purchase(self, pid):
+                    print(f"Achat {pid}")
             app.rl_agent = DummyRL()
         try:
             from ml.spam_detector import SpamDetector
-            app.spam_detector = SpamDetector() 
+            app.spam_detector = SpamDetector()
             print("✅ Spam Detector chargé.")
         except Exception as e:
             print(f"⚠️ Erreur Spam Detector: {e}")
 
-# ... à l'intérieur de create_app(), après les autres initialisations ...
-    
     # --- INITIALISATION BPM ---
     try:
         app.workflow_engine = WorkflowEngine()
@@ -388,6 +427,7 @@ def create_app():
         print(f"⚠️ Erreur Workflow Engine: {e}")
 
     return app
+
 
 app = create_app()
 
