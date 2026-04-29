@@ -1,19 +1,20 @@
-import { useState } from "react"; // Ajouté pour gérer le changement d'image
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useAuth } from "../context/AuthContext";
 import toast from "react-hot-toast";
 
-const BASE_URL = "http://localhost:5000";
+// ✅ CORRECTION : Utilise la variable d'environnement Vite
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+const DEFAULT_IMAGE = "https://placehold.co/400x300/1f2937/6b7280?text=No+Image";
 
 export default function ProductCard({ product, showSimilarity = false }) {
   const { addToCart, loading } = useCart();
   const { user } = useAuth();
   
-  // 🔄 ÉTAT POUR L'IMAGE ACTIVE (0: Face, 1: Dos, 2: Gauche, 3: Droite)
   const [activeImgIndex, setActiveImgIndex] = useState(0);
 
-  // On récupère la liste des images ou on crée un tableau avec l'image principale
   const images = product.images_list && product.images_list.length > 0 
     ? product.images_list 
     : [product.image_url];
@@ -32,10 +33,12 @@ export default function ProductCard({ product, showSimilarity = false }) {
   const outOfStock = !product.in_stock;
 
   const formatImageUrl = (url) => {
-    if (!url) return null;
+    if (!url || url === "default.png") return DEFAULT_IMAGE;
+    // ✅ Si l'URL est déjà une URL Cloudinary ou externe
     if (url.startsWith("http")) return url;
+    // ✅ Sinon, construire l'URL avec le backend
     const cleanUrl = url.startsWith("/") ? url : `/${url}`;
-    return `${BASE_URL}${cleanUrl}`;
+    return `${BASE_URL}/static/uploads${cleanUrl}`;
   };
 
   return (
@@ -53,12 +56,12 @@ export default function ProductCard({ product, showSimilarity = false }) {
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
             onError={(e) => {
               e.target.onerror = null;
-              e.target.src = "https://via.placeholder.com/400x300?text=Image+Introuvable";
+              e.target.src = DEFAULT_IMAGE;
             }}
           />
         </Link>
 
-        {/* 🔘 LES 4 BOUTONS SUR L'IMAGE (Apparaissent au survol) */}
+        {/* 🔘 LES 4 BOUTONS SUR L'IMAGE */}
         <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 bg-black/60 p-1 rounded-lg backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity">
           {['F', 'D', 'G', 'D'].map((label, idx) => (
             <button
@@ -76,10 +79,18 @@ export default function ProductCard({ product, showSimilarity = false }) {
           ))}
         </div>
 
-        {/* Badges existants */}
+        {/* Badges */}
         <div className="absolute top-2 left-2 flex flex-col gap-1">
-          {outOfStock && <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-red-500 text-white">Rupture</span>}
-          {!outOfStock && product.stock <= 5 && <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500 text-black">Plus que {product.stock} !</span>}
+          {outOfStock && (
+            <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-red-500 text-white">
+              Rupture
+            </span>
+          )}
+          {!outOfStock && product.stock <= 5 && (
+            <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500 text-black">
+              Plus que {product.stock} !
+            </span>
+          )}
         </div>
         
         <div className="absolute top-2 right-2">
@@ -100,17 +111,16 @@ export default function ProductCard({ product, showSimilarity = false }) {
               </h3>
             </Link>
             
-            {/* 🔘 BOUTONS À CÔTÉ DU NOM (Optionnel si tu les veux aussi ici) */}
             <div className="flex gap-0.5 bg-gray-800 p-0.5 rounded border border-gray-700">
-               {['F', 'D'].map((l, i) => (
-                 <button 
+              {['F', 'D'].map((l, i) => (
+                <button 
                   key={i}
                   onClick={() => images[i] && setActiveImgIndex(i)}
                   className={`w-5 h-5 text-[8px] rounded ${activeImgIndex === i ? 'bg-emerald-600' : 'text-gray-500'}`}
-                 >
-                   {l}
-                 </button>
-               ))}
+                >
+                  {l}
+                </button>
+              ))}
             </div>
           </div>
 
