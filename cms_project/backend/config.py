@@ -15,7 +15,7 @@ class Config:
 
     # JWT
     JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "jwt-secret-key")
-    JWT_ACCESS_TOKEN_EXPIRES  = timedelta(hours=24)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
 
     # Upload
@@ -24,10 +24,10 @@ class Config:
 
     # ML
     TFIDF_MAX_FEATURES = 500
-    TFIDF_MAX_TAGS     = 5
-    SIMILARITY_TOP_N   = 4
-    RL_LEARNING_RATE   = 0.15
-    RL_DISCOUNT        = 0.9
-    RL_EPSILON         = 0.6
-    RL_EPSILON_DECAY   = 0.96
-    RL_MIN_EPSILON     = 0.05
+    TFIDF_MAX_TAGS = 5
+    SIMILARITY_TOP_N = 4
+    RL_LEARNING_RATE = 0.15
+    RL_DISCOUNT = 0.9
+    RL_EPSILON = 0.6
+    RL_EPSILON_DECAY = 0.96
+    RL_MIN_EPSILON = 0.05
