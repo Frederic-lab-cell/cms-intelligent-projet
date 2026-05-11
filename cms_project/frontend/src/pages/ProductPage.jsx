@@ -6,33 +6,49 @@ import { useAuth } from "../context/AuthContext";
 import ProductSuggestions from "../components/ProductSuggestions";
 import toast from "react-hot-toast";
 
+// ✅ CORRECTION — Utilise VITE_API_URL au lieu de localhost
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
-// FIX #1 — Labels d'angle dynamiques et corrects (Face, Dos, Gauche, Droite)
 const ANGLE_LABELS = ["F", "D", "G", "Dr"];
 
-// FIX #2 — Formatage prix sécurisé (évite crash si price est null/undefined)
 function formatPrice(price) {
   const p = parseFloat(price);
   if (isNaN(p)) return "Prix non défini";
   if (p === 0) return "Gratuit";
-  return `${p.toFixed(2)} Ar`;
+  return `${p.toLocaleString()} Ar`;
 }
 
-// FIX #3 — Résolution d'URL image centralisée et robuste
+// ✅ CORRECTION — Filtre les images locales, garde uniquement Cloudinary
 function resolveImageUrl(url) {
-  if (!url || url === "default.png") {
-    return "https://via.placeholder.com/400?text=Image+non+disponible";
+  if (!url || url === "default.png" || url === "") {
+    return "https://placehold.co/400x400/1f2937/6b7280?text=No+Image";
   }
+  // URL Cloudinary ou externe → utiliser directement
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  // Fichier local → servir depuis le backend
   return `${API_BASE_URL}/static/uploads/${url}`;
+}
+
+// ✅ CORRECTION — Filtre la galerie pour ne garder que les images valides
+function buildImageGallery(product) {
+  const rawImages =
+    product.images_list && product.images_list.length > 0
+      ? product.images_list
+      : [product.image_url];
+
+  // Garde uniquement les URLs valides (Cloudinary = http, ou fichier local non vide)
+  const filtered = rawImages.filter(url => url && url !== "" && url !== "null");
+
+  if (filtered.length === 0) {
+    return [product.image_url || "default.png"];
+  }
+  return filtered;
 }
 
 // ── Tunnel de vérification achat ──────────────────────────────────────────────
 function PurchaseTunnel({ product, onClose, onConfirm }) {
   const [step, setStep] = useState(0);
 
-  // FIX #4 — Guards sur product.tags et product.price qui peuvent être null
   const topTags = (product.tags || []).slice(0, 3).map(t => t.term).join(", ") || "—";
   const priceLabel = formatPrice(product.price);
   const categoryName = product.category?.name || "Général";
@@ -77,7 +93,6 @@ function PurchaseTunnel({ product, onClose, onConfirm }) {
           <div className="flex-1 min-w-0">
             <p className="font-medium text-white text-sm truncate">{product.name}</p>
             <p className="text-xs text-gray-400 mt-0.5">{categoryName}</p>
-            {/* FIX #5 — Utilisation de formatPrice() au lieu de .toFixed() direct */}
             <p className="text-base font-bold text-emerald-400 mt-2 font-mono">{priceLabel}</p>
           </div>
         </div>
@@ -170,22 +185,15 @@ export default function ProductPage() {
 
   const outOfStock = (product.stock ?? 0) <= 0;
 
-  // FIX #6 — Construction robuste de la galerie : filtre les URLs nulles/vides
-  const rawImages =
-    product.images_list && product.images_list.length > 0
-      ? product.images_list
-      : [product.image_url];
-  const images = rawImages.filter(Boolean);
-  if (images.length === 0) images.push("default.png");
-
-  // FIX #7 — activeImgIndex borné à la taille réelle de la galerie
+  // ✅ CORRECTION — Galerie filtrée proprement
+  const images = buildImageGallery(product);
   const safeIndex = Math.min(activeImgIndex, images.length - 1);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-10">
       <div className="grid md:grid-cols-2 gap-8 mb-12">
 
-        {/* 🖼️ Section Images (Galerie Interactive) */}
+        {/* 🖼️ Section Images */}
         <div className="space-y-4">
           <div className="bg-gray-900 border border-gray-800 rounded-2xl aspect-square flex items-center justify-center overflow-hidden relative shadow-inner">
             <img
@@ -193,26 +201,29 @@ export default function ProductPage() {
               alt={product.name}
               className="w-full h-full object-contain p-4 transition-all duration-300"
               onError={e => {
-                e.target.src = "https://via.placeholder.com/400?text=Image+Introuvable";
+                e.target.onerror = null;
+                e.target.src = "https://placehold.co/400x400/1f2937/6b7280?text=No+Image";
               }}
             />
 
-            {/* FIX #8 — Labels d'angle dynamiques sans doublon */}
-            <div className="absolute bottom-4 right-4 flex gap-1.5">
-              {images.map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActiveImgIndex(idx)}
-                  className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold border transition ${
-                    safeIndex === idx
-                      ? "bg-emerald-500 border-emerald-400 text-white"
-                      : "bg-gray-900/80 border-gray-700 text-gray-400 hover:border-gray-500"
-                  }`}
-                >
-                  {ANGLE_LABELS[idx] ?? idx + 1}
-                </button>
-              ))}
-            </div>
+            {/* Boutons angles — seulement si plusieurs images valides */}
+            {images.length > 1 && (
+              <div className="absolute bottom-4 right-4 flex gap-1.5">
+                {images.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setActiveImgIndex(idx)}
+                    className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold border transition ${
+                      safeIndex === idx
+                        ? "bg-emerald-500 border-emerald-400 text-white"
+                        : "bg-gray-900/80 border-gray-700 text-gray-400 hover:border-gray-500"
+                    }`}
+                  >
+                    {ANGLE_LABELS[idx] ?? idx + 1}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {outOfStock && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
@@ -223,7 +234,7 @@ export default function ProductPage() {
             )}
           </div>
 
-          {/* Miniatures cliquables */}
+          {/* Miniatures — seulement si plusieurs images */}
           {images.length > 1 && (
             <div className="grid grid-cols-4 gap-3">
               {images.map((img, idx) => (
@@ -241,7 +252,8 @@ export default function ProductPage() {
                     className="w-full h-full object-contain"
                     alt={`Vue ${idx + 1}`}
                     onError={e => {
-                      e.target.src = "https://via.placeholder.com/80?text=?";
+                      e.target.onerror = null;
+                      e.target.src = "https://placehold.co/80x80/1f2937/6b7280?text=?";
                     }}
                   />
                 </button>
@@ -258,7 +270,6 @@ export default function ProductPage() {
           <h1 className="text-3xl font-bold text-white mb-4">{product.name}</h1>
 
           <div className="flex items-baseline gap-3 mb-6">
-            {/* FIX #9 — Utilisation de formatPrice() pour affichage sécurisé */}
             <span className="text-3xl font-bold text-emerald-400 font-mono">
               {formatPrice(product.price)}
             </span>
@@ -338,7 +349,7 @@ export default function ProductPage() {
         </div>
       </div>
 
-      {/* FIX #10 — Titres de la section Recommandations IA remplis */}
+      {/* Suggestions IA */}
       <div className="mt-16 pt-12 border-t border-gray-800">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 text-xl">
