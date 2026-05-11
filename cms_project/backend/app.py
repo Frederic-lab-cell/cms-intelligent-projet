@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer
 from services.workflow_engine import WorkflowEngine
+from dotenv import load_dotenv
+load_dotenv()
 
 # 1. Importations des modèles
 from models.database import db, Product, Category, Tag, Message, User, Order
